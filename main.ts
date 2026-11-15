@@ -12,11 +12,30 @@
  * 
  * Post-exit cooldown: 15 bars.
  * Size: 70% of equity (capped by weight room and cash).
+ * 
+ * Constants below serve as the single source of truth for all strategy thresholds.
  */
 
 import { runBars } from './vendor/makefun-bars.ts';
 
 const symbol = 'CBBTC';
+const SURGE_BARS = 3;
+const SURGE_NUM = 101n;
+const SURGE_DEN = 100n;
+const SMA_N = 60;
+const DIP_NUM = 985n;
+const DIP_DEN = 1000n;
+const TP_NUM = 102n;
+const TP_DEN = 100n;
+const SL_NUM = 996n;
+const SL_DEN = 1000n;
+const TIME_STOP_BARS = 60;
+const COOLDOWN_BARS = 15;
+const SIZE_NUM = 70n;
+const SIZE_DEN = 100n;
+const BUY_SLIPPAGE_BPS = 120;
+const SELL_SLIPPAGE_BPS = 150;
+
 const closes = new Map<string, bigint[]>();
 let cooldown = 0;
 let barsInPosition = 0;
@@ -39,18 +58,18 @@ await runBars({
     if (pos && pos.qty > 0n) {
       barsInPosition++;
       const val = state.value(symbol, pos.qty);
-      const tp = (pos.cost * 102n) / 100n;
-      const sl = (pos.cost * 996n) / 1000n;
-      const timeStop = barsInPosition >= 60;
+      const tp = (pos.cost * TP_NUM) / TP_DEN;
+      const sl = (pos.cost * SL_NUM) / SL_DEN;
+      const timeStop = barsInPosition >= TIME_STOP_BARS;
 
       if (val >= tp || val <= sl || timeStop) {
         barsInPosition = 0;
-        cooldown = 15;
+        cooldown = COOLDOWN_BARS;
         return [{
           side: 'sell',
           symbol,
           qty: pos.qty,
-          max_slippage_bps: 150,
+          max_slippage_bps: SELL_SLIPPAGE_BPS,
         }];
       }
       return [];
@@ -61,22 +80,22 @@ await runBars({
         return [];
       }
 
-      if (list.length < 60) return [];
+      if (list.length < SMA_N) return [];
 
       const latestClose = list[list.length - 1]!;
-      const close3Ago = list[list.length - 4];
+      const close3Ago = list[list.length - 1 - SURGE_BARS];
       
       let sum = 0n;
-      for (let i = list.length - 60; i < list.length; i++) {
+      for (let i = list.length - SMA_N; i < list.length; i++) {
         sum += list[i]!;
       }
-      const sma60 = sum / 60n;
+      const sma60 = sum / BigInt(SMA_N);
 
-      const surge = close3Ago !== undefined && latestClose >= (close3Ago * 101n) / 100n;
-      const dip = latestClose <= (sma60 * 985n) / 1000n;
+      const surge = close3Ago !== undefined && latestClose >= (close3Ago * SURGE_NUM) / SURGE_DEN;
+      const dip = latestClose <= (sma60 * DIP_NUM) / DIP_DEN;
 
       if (surge || dip) {
-        let notional = (state.equity * 70n) / 100n;
+        let notional = (state.equity * SIZE_NUM) / SIZE_DEN;
         const room = state.weightRoom(symbol);
         if (notional > room) notional = room;
         if (notional > state.cash) notional = state.cash;
@@ -87,7 +106,7 @@ await runBars({
             side: 'buy',
             symbol,
             notional_quote_units: notional,
-            max_slippage_bps: 120,
+            max_slippage_bps: BUY_SLIPPAGE_BPS,
           }];
         }
       }
